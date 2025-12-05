@@ -1,0 +1,13 @@
+.DELETE_ON_ERROR:
+
+SRC_PATH = ../../../local/src/genomes/$(notdir $(CURDIR))/
+BIOMART_HOST = 'http://metazoa.ensembl.org/biomart/martservice'
+
+all: $(notdir $(CURDIR))_biomart_proteincoding.bed $(notdir $(CURDIR))_biomart_mirnas.bed
+
+$(notdir $(CURDIR))_biomart_proteincoding.tsv:
+	wget -O$@ --post-file $(SRC_PATH)biomart_proteincoding.xml $(BIOMART_HOST)
+
+$(notdir $(CURDIR))_biomart_proteincoding.bed: $(notdir $(CURDIR))_biomart_proteincoding.tsv
+	cat $< | awk -F"\t" '$$8 != "" {if($$6==1){print "chr"$$3"\t"$$4"\t"$$5"\t"$$1"\t.\t+\t"$$2"\t"$$7}else if($$6==-1){print "chr"$$3"\t"$$4"\t"$$5"\t"$$8"\t.\t-\t"$$1"\t"$$2"\t"$$7"\t"$$9}}' | sort | uniq > $@;
+	rm $<
