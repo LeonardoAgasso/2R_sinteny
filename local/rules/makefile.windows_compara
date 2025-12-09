@@ -1,0 +1,20 @@
+.DELETE_ON_ERROR:
+
+hsa_ortho.tsv:
+	ln -s dataset/orthologs/hsa_biomart_orthologs.tsv ./$@
+
+%_biomart_proteincoding.bed:
+	ln -s dataset/genomes/$*/$*_biomart_proteincoding.bed ./$@
+
+%_biomart_orthologs.tsv:
+	ln -s dataset/orthologs/$*_biomart_orthologs.tsv ./$@
+
+
+# filename: outgroup_vertebrate.tsv
+# output structure:
+# lorem ipsum dolor sit amet ...
+
+cin_%.tsv: %_biomart_orthologs.tsv %_biomart_proteincoding.bed cin_biomart_proteincoding.bed
+	cat $(word 1, $^) | cut -f1,3 | sort | uniq > cin_$*_ortho.tmp; 
+	../../local/bin/vertebrate_outgroup.py $(word 2, $^) $(word 3, $^) cin_$*_ortho.tmp 2 ./$@;
+	rm cin_$*_ortho.tmp
