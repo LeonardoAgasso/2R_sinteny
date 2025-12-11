@@ -2,6 +2,7 @@
 
 import sys
 import math
+import time
 from collections import defaultdict
 sys.path.append("/home/lagasso/projects/sinteny/local/utils/")
 from poibin import PoiBin
@@ -46,6 +47,7 @@ def load_bed_genome(bed_path):
 
 	return chr_to_genes, gene_to_pos		
 
+
 def load_outgroup_genomes(folder_path):
 	"""
 	Visit all the folders inside folder_path whose name is in OUTGROUPS.
@@ -63,7 +65,7 @@ def load_outgroup_genomes(folder_path):
 	return outgroup_genomes
 
 
-# HOMOLOGY
+# ORTHOLOGY
 def load_ortholog_pairs(orthology_tsv, outgroup_col_idx_zero_based):
 	"""
 	Load orthology TSV.
@@ -101,66 +103,6 @@ def load_ortholog_pairs(orthology_tsv, outgroup_col_idx_zero_based):
 	ortholog_pairs = list(set(ortholog_pairs))	# avoid duplicate pairs
 
 	return ortholog_pairs, v_to_o, o_to_v
-
-def load_all_orthology_pairs(orthology_root_dir):
-	"""
-	For each outgroup in OUTGROUPS, load its orthology TSV.
-
-	Assumes file structure:
-		<orthology_root_dir>/<og>/<og>_orthology.tsv
-
-	and columns:
-		col 0: vertebrate gene
-		col 1: outgroup gene
-
-	Returns:
-		orthology_data: dict[og] -> (ortholog_pairs, v_to_o, o_to_v)
-	"""
-	if verbose:
-		print(f"Loading orthology for outgroups from {orthology_root_dir}...", file=sys.stderr)
-
-	orthology_data = {}
-	for og in OUTGROUPS:
-		ortho_path = f"{orthology_root_dir}/{og}/{og}_orthology.tsv"
-		# vertebrate in col 0, outgroup in col 1
-		ortholog_pairs, v_to_o, o_to_v = load_ortholog_pairs(ortho_path, outgroup_col_idx_zero_based=1)
-		orthology_data[og] = (ortholog_pairs, v_to_o, o_to_v)
-	return orthology_data
-
-def load_paralog_pairs(paralogy_tsv, self_col_idx_zero_based):
-	"""
-	Load paralogy TSV.
-	Assumes:
-		- column self_col_idx_zero_based: gene ID
-
-	Returns:
-		- paralog_pairs: list of (G1, G2)
-		- g_to_g: G -> set of G (paralogs)
-	"""
-	if verbose:
-		print(f"Loading paralog pairs from {paralogy_tsv}...", file=sys.stderr)
-	
-	paralog_pairs = []
-	g_to_g = defaultdict(set)
-
-	with open(paralogy_tsv) as para_file:
-		header = para_file.readline() # consume header
-		for line in para_file:
-			if not line.strip():
-				continue
-			fields = line.strip().split("\t")
-			if len(fields) <= self_col_idx_zero_based:
-				continue
-			gene1 = fields[self_col_idx_zero_based]
-			gene2 = fields[self_col_idx_zero_based + 1]  # assume next column
-			if not gene1 or not gene2:
-				continue
-			paralog_pairs.append((gene1, gene2))
-			g_to_g[gene1].add(gene2)
-			g_to_g[gene2].add(gene1)
-	paralog_pairs = list(set(paralog_pairs))	# avoid duplicate pairs
-
-	return paralog_pairs, g_to_g
 
 
 # P-VALUE COMPUTATION
@@ -367,7 +309,7 @@ def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_
 
 
 # Q-VALUE
-def qval_vertebrate_genes_og(v_o_qscores, method="worse_p"):
+def qval_verterbrate_genes(v_o_qscores, method="worse_p"):
     """
     Given v_o_qscores: dict[(vertebrate_gene, outgroup_gene) -> q_score],
     find vertebrate genes sharing the same outgroup gene.
@@ -427,190 +369,73 @@ def qval_vertebrate_genes_og(v_o_qscores, method="worse_p"):
 
     return vv_pvals
             
-def qval_vertebrate_genes_self(v_qscores, method="geometric_mean"):
-	"""
-	v_qscores: dict[(v_anchor, v_partner) -> q_dir]
-		Directional q-scores for self-comparison (anchor -> partner).
 
-	For each unordered pair {v1, v2}, we may have:
-		q12 = q(v1 -> v2)
-		q21 = q(v2 -> v1)
 
-	We combine them into a single self q-value q_self(v1, v2):
-
-		method == "worse_p":        q = max(q12, q21)
-		method == "geometric_mean": q = sqrt(q12 * q21)  (OHNOLOGS-like)
-		method == "harmonic_mean":  q = 2*q12*q21 / (q12 + q21)
-
-	If only one direction exists, we just use that single q.
-	Returns:
-		vv_qvals_self: dict[(v1, v2) -> q_self] with v1 < v2
-	"""
-	from collections import defaultdict
-
-	pair_to_qs = defaultdict(list)  # key: (v1, v2) with v1 < v2 -> list of directional q's
-
-	for (va, vb), q in v_qscores.items():
-		if va == vb:
-			continue  # ignore self-self
-		v1, v2 = (va, vb) if va < vb else (vb, va)
-		pair_to_qs[(v1, v2)].append(q)
-
-	vv_qvals_self = {}
-
-	for (v1, v2), qs in pair_to_qs.items():
-		if not qs:
-			continue
-
-		if method == "worse_p":
-			q_comb = max(qs)
-		elif method == "geometric_mean":
-			# geometric mean over available directions
-			log_sum = 0.0
-			for x in qs:
-				# guard: if x <= 0, treat as very small but positive
-				if x <= 0.0:
-					x = 1e-300
-				log_sum += math.log(x)
-			q_comb = math.exp(log_sum / len(qs))
-		elif method == "harmonic_mean":
-			denom = sum(1.0 / x for x in qs if x > 0.0)
-			if denom == 0.0:
-				q_comb = 0.0
-			else:
-				q_comb = len(qs) / denom
-		else:
-			raise ValueError(f"Unknown method for self q-value computation: {method}")
-
-		vv_qvals_self[(v1, v2)] = q_comb
-
-	return vv_qvals_self
 
 
 def main():
-	
-	if len(sys.argv) != 6:
-		print(f"Usage: {sys.argv[0]} <vertebrate_bed> <outgroup_root_dir> <orthology_root_dir> <paralogy_tsv> <self_col_1based> > <output_tsv>", file=sys.stderr)
+	if len(sys.argv) != 5:
+		print(f"Usage: {sys.argv[0]} <vertebrate_bed> <outgroup_bed> <orthology_tsv> <outgroup_column_1based> > <output_tsv>", file=sys.stderr)
 		sys.exit(1)
 
-	vertebrate_bed      = sys.argv[1]
-	outgroup_root_dir   = sys.argv[2]
-	orthology_root_dir  = sys.argv[3]
-	paralogy_tsv        = sys.argv[4]
-	self_col_1based     = int(sys.argv[5])
-	self_col_idx        = self_col_1based - 1
+	vertebrate_bed = sys.argv[1]
+	outgroup_bed = sys.argv[2]
+	orthology_tsv = sys.argv[3]
+	outgroup_col_1based = int(sys.argv[4])
 
-	# Load vertebrate genome
+	outgroup_col_idx = outgroup_col_1based - 1
+
+    # Load genomes
 	chr_to_genes_V, gene_to_pos_V = load_bed_genome(vertebrate_bed)
+	chr_to_genes_O, gene_to_pos_O = load_bed_genome(outgroup_bed)
 
-    # Load outgroup genomes
-	outgroup_genomes = load_outgroup_genomes(outgroup_root_dir)
-    # outgroup_genomes[og] = (chr_to_genes_O, gene_to_pos_O)
+    # Load orthology
+	ortholog_pairs, v_to_o, o_to_v = load_ortholog_pairs(orthology_tsv, outgroup_col_idx)
 
-    # Load orthology for all outgroups
-	orthology_data = load_all_orthology_pairs(orthology_root_dir)
-    # orthology_data[og] = (ortholog_pairs, v_to_o, o_to_v)
-
-    # Load paralogy for self-comparison
-	paralog_pairs, g_to_g = load_paralog_pairs(paralogy_tsv, self_col_idx)
-
-	# Precompute Pi per window size for each outgroup
-	Pi_by_W_out = {og: {} for og in OUTGROUPS}
-	for og in OUTGROUPS:
-		_, _, o_to_v = orthology_data[og]  # note: load_all_orthology_pairs gives (ortholog_pairs, v_to_o, o_to_v)
-		for W in WINDOW_SIZES:
-			Pi_by_W_out[og][W] = compute_all_Pi(o_to_v, chr_to_genes_V, gene_to_pos_V, W)
-
-    # Precompute Pi per window size for self comparisons (paralogs)
-	Pi_by_W_self = {}
+    # Precompute Pi per window size
+	Pi_by_W = {}
+    
 	for W in WINDOW_SIZES:
-		Pi_by_W_self[W] = compute_all_Pi(g_to_g, chr_to_genes_V, gene_to_pos_V, W)
+		Pi_by_W[W] = compute_all_Pi(o_to_v, chr_to_genes_V, gene_to_pos_V, W)
 
-	# Global outgroup-combined q-values for V–V
-	vv_qvals_og_combined = defaultdict(lambda: 1.0)  # start at 1.0 so we can multiply
+    # Compute p-values for each anchor and window size
+	out_f = sys.stdout
+	#header = ["out_chr", "out_gene", "out_idx", "vert_chr", "vert_gene", "vert_idx", "W", "N0", "k", "P_geom", "P_value_(mean_field)", "P_value_(PoiBin)"]
+	header = ["v1", "v2", "q_value"]
+	out_f.write("\t".join(header) + "\n")
 
-	for og in OUTGROUPS:
-		if verbose:
-			print(f"Processing outgroup {og}...", file=sys.stderr)
+	v_o_pvals = defaultdict(list)
 
-		chr_to_genes_O, gene_to_pos_O = outgroup_genomes[og]
-		ortholog_pairs, v_to_o, o_to_v = orthology_data[og]
+	
+	for vertebrate_gene, outgroup_gene in ortholog_pairs:
 
-		# anchor -> outgroup p-values over W
-		v_o_pvals = defaultdict(list)
-
-		for vertebrate_gene, outgroup_gene in ortholog_pairs:
-			if vertebrate_gene not in gene_to_pos_V:
-				continue
-			if outgroup_gene not in gene_to_pos_O:
-				continue
-
-			for W in WINDOW_SIZES:
-				Pi_dict = Pi_by_W_out[og][W]
-				res = pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict)
-				if res is None:  # N0==0 or k<MIN_K
-					continue
-				v_o_pvals[(vertebrate_gene, outgroup_gene)].append(res["p_value"])
-
-        # Compute q-scores per (V,O) for this outgroup
-		v_og_qscores = {}
-		for (v_gene, o_gene), pvals in v_o_pvals.items():
-			positive_pvals = [p for p in pvals if p > 0.0]
-			if not positive_pvals:
-				q = 0.0
-			else:
-				log_sum = sum(math.log(p) for p in positive_pvals)
-				q = math.exp(log_sum / len(positive_pvals))
-			
-			v_og_qscores[(v_gene, o_gene)] = q
-
-        # Convert (V,O) q-scores to (V,V') q-scores for this outgroup
-		vv_qvals_og_this = qval_vertebrate_genes_og(v_og_qscores, method="worse_p")
-
-        # Combine across outgroups by multiplying q-values
-		for (v1, v2), q_og in vv_qvals_og_this.items():
-			vv_qvals_og_combined[(v1, v2)] *= q_og
-
-	# Self-comparison: compute directional p-values and q-scores
-	v_self_pvals = defaultdict(list)  # key: (anchor_gene, partner_gene)
-
-	for g1, g2 in paralog_pairs:
-		if g1 not in gene_to_pos_V or g2 not in gene_to_pos_V:
+		if vertebrate_gene not in gene_to_pos_V:
+			continue
+		if outgroup_gene not in gene_to_pos_O:
 			continue
 
 		for W in WINDOW_SIZES:
-			Pi_dict_self = Pi_by_W_self[W]
+			Pi_dict = Pi_by_W[W]
+			res = pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict)
+			if res is None:	# Skip anchors with N0==0 or k<MIN_K
+				continue
+			v_o_pvals[(vertebrate_gene, outgroup_gene)].append(res["p_value"])
 
-			# direction g1 -> g2
-			res12 = pvalue_for_anchor(g1, g2, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self)
-			if res12 is not None:
-				v_self_pvals[(g1, g2)].append(res12["p_value"])
+	v_o_qscores = {}
 
-            # direction g2 -> g1
-			res21 = pvalue_for_anchor(g2, g1, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self)
-			if res21 is not None:
-				v_self_pvals[(g2, g1)].append(res21["p_value"])
-
-	v_self_qscores = {}
-	for (v1, v2), pvals in v_self_pvals.items():
+	for (v_gene, o_gene), pvals in v_o_pvals.items():
 		positive_pvals = [p for p in pvals if p > 0.0]
 		if not positive_pvals:
 			q = 0.0
 		else:
 			log_sum = sum(math.log(p) for p in positive_pvals)
 			q = math.exp(log_sum / len(positive_pvals))
-		v_self_qscores[(v1, v2)] = q	
+		v_o_qscores[(v_gene, o_gene)] = q
+            
+	vv_qvals = qval_verterbrate_genes(v_o_qscores, method="worse_p")
 
-	vv_qvals_self = qval_vertebrate_genes_self(v_self_qscores, method="geometric_mean")
-
-	out_f = sys.stdout
-	header = ["v1", "v2", "q_outgroup", "q_self"]
-	out_f.write("\t".join(header) + "\n")
-
-	for (v1, v2), q_out in vv_qvals_og_combined.items():
-		q_self = vv_qvals_self.get((v1, v2), 1.0)
-		out_f.write("\t".join([v1, v2, f"{q_out:.6g}", f"{q_self:.6g}"]) + "\n")
-
+	for (v1, v2), qval in vv_qvals.items():
+		out_f.write("\t".join([v1, v2, f"{qval:.6g}"]) + "\n")
 
 if __name__ == "__main__":
 	main()

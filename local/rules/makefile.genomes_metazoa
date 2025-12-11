@@ -1,6 +1,6 @@
 .DELETE_ON_ERROR:
 
-SRC_PATH = ../../../local/src/genomes/$(notdir $(CURDIR))/
+SRC_PATH = ../../../../local/src/genomes/$(notdir $(CURDIR))/
 BIOMART_HOST = 'http://metazoa.ensembl.org/biomart/martservice'
 
 all: $(notdir $(CURDIR))_biomart_proteincoding.bed $(notdir $(CURDIR))_biomart_mirnas.bed
