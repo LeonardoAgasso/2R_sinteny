@@ -1,0 +1,12 @@
+.DELETE_ON_ERROR:
+
+SRC_PATH = ../../local/src/paralogs/
+BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
+
+all: hsa_biomart_paralogs.tsv
+
+%_biomart_paralogs.tsv:
+	wget -O$@.tmp --post-file $(SRC_PATH)$*_biomart_paralogs.xml $(BIOMART_HOST);
+	cat $@.tmp | awk -F"\t" '$$3 != ""' | awk -F"\t" '{if($$1<=$$2){print $$0} else {print $$2"\t"$$1"\t"$$3"\t"$$4"\t"$$6"\t"$$5}}' | sort | uniq > $@;
+	rm $@.tmp;
+	echo "number of paralogs for $*: " `cat $@ | wc -l`

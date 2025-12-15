@@ -1,13 +1,12 @@
-.DELETE_ON_ERRRO:
+.DELETE_ON_ERROR:
 
-DIR = $(notdir $(CURDIR))
 SRC_PATH = ../../local/src/orthologs/
 BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
 
 all: hsa_biomart_orthologs.tsv tni_biomart_orthologs.tsv gga_biomart_orthologs.tsv loc_biomart_orthologs.tsv ola_biomart_orthologs.tsv
 
-%_biomart_orthologs.tsv:
-	wget -O$@.tmp --post-file $(SRC_PATH)$*_biomart_orthologs.xml $(BIOMART_HOST);
-	cat $@.tmp | awk -F"\t" '$$3 != "" || $$8 != "" || $$13 != "" || $$18 != ""' | sort | uniq > $@;
+hsa_%_biomart_orthologs.tsv:
+	wget -O$@.tmp --post-file $(SRC_PATH)hsa_$*_biomart_orthologs.xml $(BIOMART_HOST);
+	cat $@.tmp | awk -F"\t" '$$3 != ""' | sort | uniq > $@;
 	rm $@.tmp;
 	echo "number of orthologs for $*: " `cat $@ | wc -l`

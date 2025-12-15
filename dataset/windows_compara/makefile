@@ -1,1 +1,0 @@
-../../local/rules/makefile.windows_compara

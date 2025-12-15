@@ -13,3 +13,6 @@ $(DIR)_biomart_%.tsv:
 $(DIR)_biomart_%.bed: $(DIR)_biomart_%.tsv
 	cat $< | sort -k2 -n | awk -F"\t" '$$1 != "" {if($$5==1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t+"}else if($$5==-1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t-"}}' | uniq > $@;
 	rm $<
+
+$(DIR)_biomart_all.bed: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
+	cat $^ | sort | uniq > $@
