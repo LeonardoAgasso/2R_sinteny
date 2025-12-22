@@ -1,8 +1,15 @@
 .DELETE_ON_ERROR:
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
 
 DIR = $(notdir $(CURDIR))
 SRC_PATH = ../../../../local/src/genomes/$(DIR)/
+
+include $(SRC_PATH)$(DIR)_ftp.mk
+
 BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
+ENSEMBL_FTP_BASE = 'https://ftp.ensembl.org/pub/current_fasta'
+PEP_URL = $(ENSEMBL_FTP_BASE)/$(ENSEMBL_SPECIES_DIR)/pep/$(PEP_FILE)
 
 all: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
 
@@ -14,5 +21,13 @@ $(DIR)_biomart_%.bed: $(DIR)_biomart_%.tsv
 	cat $< | sort -k2 -n | awk -F"\t" '$$1 != "" {if($$5==1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t+"}else if($$5==-1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t-"}}' | uniq > $@;
 	rm $<
 
+$(DIR)_biomart_proteins.fa:
+	wget -O$@ --post-file $(SRC_PATH)biomart_proteins.xml $(BIOMART_HOST)
+
 $(DIR)_biomart_all.bed: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
 	cat $^ | sort | uniq > $@
+
+
+
+$(DIR)_peptides.fa:
+	wget -O - $(PEP_URL) | gzip -cd > $@
