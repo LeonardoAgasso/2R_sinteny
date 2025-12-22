@@ -1,1 +1,0 @@
-../../../../local/src/genomes/csa/csa_ftp.mk

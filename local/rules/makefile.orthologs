@@ -1,7 +1,13 @@
 .DELETE_ON_ERROR:
 
+V_DIR := ../genomes/vertebrata/
+O_DIR := ../genomes/outgroups/
+
 SRC_PATH = ../../local/src/orthologs/
 BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
+
+THREADS ?= 35
+
 
 all: hsa_biomart_orthologs.tsv tni_biomart_orthologs.tsv gga_biomart_orthologs.tsv loc_biomart_orthologs.tsv ola_biomart_orthologs.tsv
 
@@ -10,3 +16,28 @@ hsa_%_biomart_orthologs.tsv:
 	cat $@.tmp | awk -F"\t" '$$3 != ""' | sort | uniq > $@;
 	rm $@.tmp;
 	echo "number of orthologs for $*: " `cat $@ | wc -l`
+
+
+%_peptides.protein_coding.fa:
+	@if [ -f "$(O_DIR)$*/$@" ]; then \
+	  ln -sf "$(O_DIR)$*/$@" "$@"; \
+	elif [ -f "$(V_DIR)$*/$@" ]; then \
+	  ln -sf "$(V_DIR)$*/$@" "$@"; \
+	else \
+	  echo "ERROR: cannot find $@" >&2; exit 1; \
+	fi
+
+blast_csa_%.tsv: csa_peptides.protein_coding.fa %_peptides.protein_coding.fa 
+	mkdir -p blastdb_results
+	makeblastdb -in csa_peptides.protein_coding.fa \
+	            -dbtype prot \
+	            -out blastdb/csa \
+	            -parse_seqids
+	blastp \
+	  -query $*_peptides.protein_coding.fa \
+	  -db blastdb/csa \
+	  -evalue 1e-5 \
+	  -max_hsps 1 \
+	  -max_target_seqs 50 \
+	  -num_threads 35 \
+	  -outfmt "6 qseqid sseqid bitscore evalue pident length qcovs" > $@

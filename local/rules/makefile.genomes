@@ -31,3 +31,22 @@ $(DIR)_biomart_all.bed: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.b
 
 $(DIR)_peptides.fa:
 	wget -O - $(PEP_URL) | gzip -cd > $@
+
+# this rule keeps only proteins associated with protein-coding genes, removig the ID version and assigning the gene ID as the only header
+$(DIR)_peptides.protein_coding.fa: $(DIR)_peptides.fa
+	cat $< | \
+	awk '\
+	BEGIN{keep=0} \
+	/^>/{ \
+	  keep = ($$0 ~ /gene_biotype:protein_coding/); \
+	  if(!keep) next; \
+	  # protein id = first token after ">" (strip version) \
+	  prot=$$1; sub(/^>/,"",prot); sub(/\.[0-9]+$$/,"",prot); \
+	  # gene id = whatever follows gene: up to dot/space \
+	  gene=""; \
+	  if(match($$0,/gene:([^ .]+)(\.[0-9]+)?/,m)) gene=m[1]; \
+	  if(gene!="") print ">" prot " " gene; \
+	  else          print ">" prot; \
+	  next; \
+	} \
+	keep { print }' > $@
