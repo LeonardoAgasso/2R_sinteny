@@ -1,0 +1,41 @@
+.DELETE_ON_ERROR:
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
+
+DIR = $(notdir $(CURDIR))
+SRC_PATH = ../../../../local/src/genomes/$(DIR)/
+
+include $(SRC_PATH)$(DIR)_ftp.mk
+
+BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
+ENSEMBL_FTP_BASE = 'https://ftp.ensembl.org/pub/current_fasta'
+PEP_URL = $(ENSEMBL_FTP_BASE)/$(ENSEMBL_SPECIES_DIR)/pep/$(PEP_FILE)
+
+all: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
+
+clean_fasta: 
+	rm -f $(DIR)_peptides.fa $(DIR)_peptides.protein_coding.fa
+
+pc_peptides: clean_fasta $(DIR)_peptides.protein_coding.fa
+
+$(DIR)_peptides.fa:
+	wget -O - $(PEP_URL) | gzip -cd > $@
+
+# this rule keeps only proteins associated with protein-coding genes, removig the ID version and assigning the gene ID as the only header
+$(DIR)_peptides.protein_coding.fa: $(DIR)_peptides.fa
+	cat $< | \
+	awk '\
+	BEGIN{keep=0} \
+	/^>/{ \
+	  keep = ($$0 ~ /gene_biotype:protein_coding/); \
+	  if(!keep) next; \
+	  # protein id = first token after ">" (strip version) \
+	  prot=$$1; sub(/^>/,"",prot); sub(/\.[0-9]+$$/,"",prot); \
+	  # gene id = whatever follows gene: up to dot/space \
+	  gene=""; \
+	  if(match($$0,/gene:([^ .]+)(\.[0-9]+)?/,m)) gene=m[1]; \
+	  if(gene!="") print ">" gene "," prot; \
+	  else          print ">GENE_MISSING," prot; \
+	  next; \
+	} \
+	keep { print }' > $@;

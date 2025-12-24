@@ -1,0 +1,15 @@
+.DELETE_ON_ERROR:
+
+SPECIES := $(sort $(patsubst %/,%,$(dir $(wildcard */makefile))))
+
+.PHONY: all make_bed $(SPECIES)
+
+all: make_bed
+
+make_bed: $(SPECIES)
+
+$(SPECIES):
+	$(MAKE) -C $@ make_bed
+
+print-species:
+	@echo $(SPECIES)

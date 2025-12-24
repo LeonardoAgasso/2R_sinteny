@@ -8,45 +8,19 @@ SRC_PATH = ../../../../local/src/genomes/$(DIR)/
 include $(SRC_PATH)$(DIR)_ftp.mk
 
 BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
-ENSEMBL_FTP_BASE = 'https://ftp.ensembl.org/pub/current_fasta'
-PEP_URL = $(ENSEMBL_FTP_BASE)/$(ENSEMBL_SPECIES_DIR)/pep/$(PEP_FILE)
+BED_FILES := $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirna.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
 
-all: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
+clean_bed: 
+	rm -f $(BED_FILES)
 
+make_bed: clean_bed $(DIR)_biomart_all.bed
 
 $(DIR)_biomart_%.tsv:
-	wget -O$@ --post-file $(SRC_PATH)biomart_$*.xml $(BIOMART_HOST)
+	wget -O $@ --post-file $(SRC_PATH)biomart_$*.xml $(BIOMART_HOST)
 
 $(DIR)_biomart_%.bed: $(DIR)_biomart_%.tsv
 	cat $< | sort -k2 -n | awk -F"\t" '$$1 != "" {if($$5==1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t+"}else if($$5==-1){print $$2"\t"$$3"\t"$$4"\t"$$1"\t.\t-"}}' | uniq > $@;
 	rm $<
 
-$(DIR)_biomart_proteins.fa:
-	wget -O$@ --post-file $(SRC_PATH)biomart_proteins.xml $(BIOMART_HOST)
-
-$(DIR)_biomart_all.bed: $(DIR)_biomart_proteincoding.bed $(DIR)_biomart_mirnas.bed $(DIR)_biomart_miscrna.bed $(DIR)_biomart_rrna.bed $(DIR)_biomart_snorna.bed $(DIR)_biomart_snrna.bed
+$(DIR)_biomart_all.bed: $(BED_FILES)
 	cat $^ | sort | uniq > $@
-
-
-
-$(DIR)_peptides.fa:
-	wget -O - $(PEP_URL) | gzip -cd > $@
-
-# this rule keeps only proteins associated with protein-coding genes, removig the ID version and assigning the gene ID as the only header
-$(DIR)_peptides.protein_coding.fa: $(DIR)_peptides.fa
-	cat $< | \
-	awk '\
-	BEGIN{keep=0} \
-	/^>/{ \
-	  keep = ($$0 ~ /gene_biotype:protein_coding/); \
-	  if(!keep) next; \
-	  # protein id = first token after ">" (strip version) \
-	  prot=$$1; sub(/^>/,"",prot); sub(/\.[0-9]+$$/,"",prot); \
-	  # gene id = whatever follows gene: up to dot/space \
-	  gene=""; \
-	  if(match($$0,/gene:([^ .]+)(\.[0-9]+)?/,m)) gene=m[1]; \
-	  if(gene!="") print ">" prot "," gene; \
-	  else          print ">" prot; \
-	  next; \
-	} \
-	keep { print }' > $@.tmp;

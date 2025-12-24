@@ -1,0 +1,13 @@
+.DELETE_ON_ERROR:
+
+SPECIES := $(sort $(patsubst %/,%,$(dir $(wildcard */makefile))))
+
+.PHONY: all pc_peptides $(SPECIES)
+
+all: pc_peptides
+
+pc_peptides: $(SPECIES)
+
+$(SPECIES):
+	$(MAKE) -C $@ pc_peptides
+
