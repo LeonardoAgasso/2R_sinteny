@@ -45,8 +45,8 @@ $(DIR)_peptides.protein_coding.fa: $(DIR)_peptides.fa
 	  # gene id = whatever follows gene: up to dot/space \
 	  gene=""; \
 	  if(match($$0,/gene:([^ .]+)(\.[0-9]+)?/,m)) gene=m[1]; \
-	  if(gene!="") print ">" prot " " gene; \
+	  if(gene!="") print ">" prot "," gene; \
 	  else          print ">" prot; \
 	  next; \
 	} \
-	keep { print }' > $@
+	keep { print }' > $@.tmp;

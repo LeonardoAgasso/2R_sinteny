@@ -1,9 +1,12 @@
+# GENERAL
 **/*.tsv
 **/*.bed
 **/*.gtf
 **/*.gff3
 **/*.fa
 **/*.gz
+
+# BLAST/DIAMOND
 **/*.pdb
 **/*.phr
 **/*.pin
@@ -13,3 +16,4 @@
 **/*.psq
 **/*.ptf
 **/*.pto
+**/*.dmnd

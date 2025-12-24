@@ -1,4 +1,5 @@
 .DELETE_ON_ERROR:
+SHELL := /bin/bash
 
 V_DIR := ../genomes/vertebrata/
 O_DIR := ../genomes/outgroups/
@@ -6,18 +7,30 @@ O_DIR := ../genomes/outgroups/
 SRC_PATH = ../../local/src/orthologs/
 BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
 
-THREADS ?= 35
+BLASTP_SCRIPT_PATH := ../../local/bin/run_blastp.sh
 
+# BLAST parameters
+DIAMOND := ../../local/tools/diamond
+THREADS := 100
 
-all: hsa_biomart_orthologs.tsv tni_biomart_orthologs.tsv gga_biomart_orthologs.tsv loc_biomart_orthologs.tsv ola_biomart_orthologs.tsv
+OUTGROUPS := csa cin
 
-hsa_%_biomart_orthologs.tsv:
-	wget -O$@.tmp --post-file $(SRC_PATH)hsa_$*_biomart_orthologs.xml $(BIOMART_HOST);
+# Biomart orthologs
+%_csa_biomart_orthologs.tsv:
+	wget -O$@.tmp --post-file $(SRC_PATH)$*_csa_biomart_orthologs.xml $(BIOMART_HOST);
+	cat $@.tmp | awk -F"\t" '$$3 != ""' | sort | uniq > $@;
+	rm $@.tmp;
+	echo "number of orthologs for $*: " `cat $@ | wc -l`
+
+%_cin_biomart_orthologs.tsv:
+	wget -O$@.tmp --post-file $(SRC_PATH)$*_cin_biomart_orthologs.xml $(BIOMART_HOST);
 	cat $@.tmp | awk -F"\t" '$$3 != ""' | sort | uniq > $@;
 	rm $@.tmp;
 	echo "number of orthologs for $*: " `cat $@ | wc -l`
 
 
+
+# BLAST
 %_peptides.protein_coding.fa:
 	@if [ -f "$(O_DIR)$*/$@" ]; then \
 	  ln -sf "$(O_DIR)$*/$@" "$@"; \
@@ -27,17 +40,22 @@ hsa_%_biomart_orthologs.tsv:
 	  echo "ERROR: cannot find $@" >&2; exit 1; \
 	fi
 
-blast_csa_%.tsv: csa_peptides.protein_coding.fa %_peptides.protein_coding.fa 
-	mkdir -p blastdb_results
-	makeblastdb -in csa_peptides.protein_coding.fa \
-	            -dbtype prot \
-	            -out blastdb/csa \
-	            -parse_seqids
-	blastp \
-	  -query $*_peptides.protein_coding.fa \
-	  -db blastdb/csa \
-	  -evalue 1e-5 \
-	  -max_hsps 1 \
-	  -max_target_seqs 50 \
-	  -num_threads 35 \
-	  -outfmt "6 qseqid sseqid bitscore evalue pident length qcovs" > $@
+blast_cin_%.raw.tsv: %_peptides.protein_coding.fa
+	$(BLASTP_SCRIPT_PATH) cin $* $(THREADS)
+
+blast_cin_%.best_gene_pairs.tsv: blast_cin_%.raw.tsv
+	@printf "gene1\tgene2\tbitscore\tevalue\tpident\tlength\tqcov\n" > $@
+	@tail -n +2 $< | \
+	awk -F'\t' 'BEGIN{OFS="\t"} function gene_id(x,m){return (match(x,/ENS[A-Z]*G[0-9]+/,m)?m[0]:"")} {g1=gene_id($$1); g2=gene_id($$2); if(g1==""||g2=="") next; a=g1; b=g2; if(a>b){t=a;a=b;b=t} print a,b,$$3,$$4,$$5,$$6,$$7}' | \
+	sort -t $$'\t' -k1,1 -k2,2 -k3,3nr -k4,4g -k7,7nr -k5,5nr -k6,6nr | \
+	awk -F'\t' 'BEGIN{OFS="\t"} !seen[$$1 SUBSEP $$2]++ {print}' >> $@
+
+blast_csa_%.raw.tsv: %_peptides.protein_coding.fa
+	$(BLASTP_SCRIPT_PATH) csa $* $(THREADS)
+
+blast_csa_%.best_gene_pairs.tsv: blast_csa_%.raw.tsv
+	@printf "gene1\tgene2\tbitscore\tevalue\tpident\tlength\tqcov\n" > $@
+	@tail -n +2 $< | \
+	awk -F'\t' 'BEGIN{OFS="\t"} function gene_id(x,m){return (match(x,/ENS[A-Z]*G[0-9]+/,m)?m[0]:"")} {g1=gene_id($$1); g2=gene_id($$2); if(g1==""||g2=="") next; a=g1; b=g2; if(a>b){t=a;a=b;b=t} print a,b,$$3,$$4,$$5,$$6,$$7}' | \
+	sort -t $$'\t' -k1,1 -k2,2 -k3,3nr -k4,4g -k7,7nr -k5,5nr -k6,6nr | \
+	awk -F'\t' 'BEGIN{OFS="\t"} !seen[$$1 SUBSEP $$2]++ {print}' >> $@

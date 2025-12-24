@@ -1,0 +1,5 @@
+.DELETE_ON_ERROR:
+
+install_diamond:
+	wget http://github.com/bbuchfink/diamond/releases/download/v2.1.17/diamond-linux64.tar.gz;
+	tar xzf diamond-linux64.tar.gz
