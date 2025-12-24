@@ -46,8 +46,11 @@ print_outgroups:
 	  echo "ERROR: cannot find $@" >&2; exit 1; \
 	fi
 
-blast_cin_%.raw.tsv: %_peptides.protein_coding.fa
+blast_cin_%.raw.tsv: %_peptides.protein_coding.fa cin_peptides.protein_coding.fa
 	$(BLASTP_SCRIPT_PATH) cin $* $(THREADS)
+
+blast_csa_%.raw.tsv: %_peptides.protein_coding.fa csa_peptides.protein_coding.fa
+	$(BLASTP_SCRIPT_PATH) csa $* $(THREADS)
 
 blast_cin_%.best_gene_pairs.tsv: blast_cin_%.raw.tsv
 	@printf "gene1\tgene2\tbitscore\tevalue\tpident\tlength\tqcov\n" > $@
@@ -55,9 +58,6 @@ blast_cin_%.best_gene_pairs.tsv: blast_cin_%.raw.tsv
 	awk -F'\t' 'BEGIN{OFS="\t"} function gene_id(x,m){return (match(x,/ENS[A-Z]*G[0-9]+/,m)?m[0]:"")} { gq=gene_id($$1); gs=gene_id($$2); if(gq==""||gs=="") next; print gq,gs,$$3,$$4,$$5,$$6,$$7}' | \
 	LC_ALL=C sort -t $$'\t' -k1,1 -k3,3nr -k4,4g -k7,7nr -k5,5nr -k6,6nr | \
 	awk -F'\t' 'BEGIN{OFS="\t"} !seen[$$1]++ {print}' >> $@
-
-blast_csa_%.raw.tsv: %_peptides.protein_coding.fa
-	$(BLASTP_SCRIPT_PATH) csa $* $(THREADS)
 
 blast_csa_%.best_gene_pairs.tsv: blast_csa_%.raw.tsv
 	@printf "gene1\tgene2\tbitscore\tevalue\tpident\tlength\tqcov\n" > $@
