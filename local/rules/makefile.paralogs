@@ -5,6 +5,58 @@ BIOMART_HOST = 'http://www.ensembl.org/biomart/martservice'
 
 all: hsa_biomart_paralogs.tsv
 
+blast_cin_%.best_gene_pairs.tsv:
+	ln -s ../orthologs/$@ ./$@
+
+blast_csa_%.best_gene_pairs.tsv:
+	ln -s ../orthologs/$@ ./$@
+
+%_cin.paralogs_from_blast.tsv: blast_cin_%.best_gene_pairs.tsv
+	@printf "gene1\tgene2\toutgroup_gene\n" > $@
+	@tail -n +2 $< | \
+	LC_ALL=C sort -k2,2 -k1,1 | \
+	awk -F'\t' 'BEGIN{OFS="\t"} \
+	  function emit_pairs(n, og,   i,j,a,b){ \
+	    if(n<2) return; \
+	    for(i=1;i<=n;i++) for(j=i+1;j<=n;j++){ \
+	      a=genes[i]; b=genes[j]; \
+	      if(a>b){t=a;a=b;b=t} \
+	      print a,b,og; \
+	    } \
+	  } \
+	  { \
+	    vg=$$1; og=$$2; \
+	    sub(/\r$$/,"",vg); sub(/\r$$/,"",og); \
+	    if(cur!="" && og!=cur){ emit_pairs(n, cur); delete genes; n=0 } \
+	    cur=og; \
+	    genes[++n]=vg; \
+	  } \
+	  END{ if(cur!="") emit_pairs(n, cur) }' >> $@
+
+%_csa.paralogs_from_blast.tsv: blast_csa_%.best_gene_pairs.tsv
+	@printf "gene1\tgene2\toutgroup_gene\n" > $@
+	@tail -n +2 $< | \
+	LC_ALL=C sort -k2,2 -k1,1 | \
+	awk -F'\t' 'BEGIN{OFS="\t"} \
+	  function emit_pairs(n, og,   i,j,a,b){ \
+	    if(n<2) return; \
+	    for(i=1;i<=n;i++) for(j=i+1;j<=n;j++){ \
+	      a=genes[i]; b=genes[j]; \
+	      if(a>b){t=a;a=b;b=t} \
+	      print a,b,og; \
+	    } \
+	  } \
+	  { \
+	    vg=$$1; og=$$2; \
+	    sub(/\r$$/,"",vg); sub(/\r$$/,"",og); \
+	    if(cur!="" && og!=cur){ emit_pairs(n, cur); delete genes; n=0 } \
+	    cur=og; \
+	    genes[++n]=vg; \
+	  } \
+	  END{ if(cur!="") emit_pairs(n, cur) }' >> $@
+
+
+
 %_biomart_paralogs.tsv:
 	wget -O$@.tmp --post-file $(SRC_PATH)$*_biomart_paralogs.xml $(BIOMART_HOST);
 	cat $@.tmp | awk -F"\t" '$$3 != ""' | awk -F"\t" '{if($$1<=$$2){print $$0} else {print $$2"\t"$$1"\t"$$3"\t"$$4"\t"$$6"\t"$$5}}' | sort | uniq > $@;
