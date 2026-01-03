@@ -6,10 +6,17 @@ from collections import defaultdict
 sys.path.append("/home/lagasso/projects/sinteny/local/utils/")
 from poibin import PoiBin
 
+
+"""
+Compute synteny-based q-values for vertebrate genes using outgroup genomes.
+"""
+
+
+
 debug = False
 verbose = True
 WINDOW_SIZES = [50, 100, 200, 300, 400, 500]
-MIN_K = 2
+MIN_K = 1
 OUTGROUPS = ["cin", "csa"]
 
 
@@ -171,25 +178,37 @@ def load_paralog_pairs(paralogy_tsv, self_col_idx_zero_based):
 # P-VALUE COMPUTATION
 def get_window_indices(center_idx, n_genes, W):
 	"""
-	n_genes is the total number of genes on the chromosome.
-	If a gene is too close to the end/beginning of a chromosome,
-	the window size is reduced.
+	v1 convention: total window length is W+1 (includes the anchor).
+	Fixed length at chromosome boundaries by shifting (asymmetric near ends).
+	Returns half-open [start, end) indices.
 	"""
-	half = W // 2
-	start = max(0, center_idx - half)
-	end = start + W
+	L = W + 1  # total length including anchor
+
+	if n_genes <= L:
+		return 0, n_genes
+
+	half_left = W // 2
+	start = center_idx - half_left
+	end = start + L
+
+	if start < 0:
+		start = 0
+		end = L
+
 	if end > n_genes:
 		end = n_genes
-		start = max(0, end - W)
+		start = n_genes - L
+
 	return start, end
 
 def total_windows_in_genome(chr_to_genes, W):
-	"""Total number of windows of length W across all chromosomes."""
+	"""Total number of full windows of length (W+1) across all chromosomes."""
+	L = W + 1
 	total = 0
-	for chrom, genes in chr_to_genes.items():
+	for genes in chr_to_genes.values():
 		n = len(genes)
-		if n >= W:
-			total += (n - W + 1)
+		if n >= L:
+			total += (n - L + 1)
 	return total
 
 def compute_Pi_for_outgene(out_gene, o_to_v, chr_to_genes_V, gene_to_pos_V, total_windows, W):
@@ -202,6 +221,7 @@ def compute_Pi_for_outgene(out_gene, o_to_v, chr_to_genes_V, gene_to_pos_V, tota
 	if not orthologs:
 		return 0.0
 
+	L = W + 1  # total length including anchor
 	windows_without = 0
 
 	# positions of orthologs per chromosome (indices, not genomic coords)
@@ -214,37 +234,34 @@ def compute_Pi_for_outgene(out_gene, o_to_v, chr_to_genes_V, gene_to_pos_V, tota
 
 	for chr_v, genes_on_chr in chr_to_genes_V.items():
 		n = len(genes_on_chr)
-		if n < W:
+		if n < L:
 			continue
 
 		pos_list = sorted(positions_by_chr.get(chr_v, []))
 		if not pos_list:
 			# no orthologs on this chromosome
-			windows_without += (n - W + 1)
+			windows_without += (n - L + 1)
 			continue
 
 		# gaps between ortholog positions
 		prev = -1
 		for p in pos_list:
 			seg_len = p - prev - 1
-			if seg_len >= W:
-				windows_without += (seg_len - W + 1)
+			if seg_len >= L:
+				windows_without += (seg_len - L + 1)
 			prev = p
 
 		# tail from last ortholog to end
 		seg_len = (n - 1) - prev
-		if seg_len >= W:
-			windows_without += (seg_len - W + 1)
+		if seg_len >= L:
+			windows_without += (seg_len - L + 1)
 
 	if total_windows == 0:
 		return 0.0
 
 	Pi = 1.0 - (windows_without/total_windows)
-	if Pi < 0.0:
-		Pi = 0.0
-	if Pi > 1.0:
-		Pi = 1.0
-	return Pi
+	
+	return min(1.0, max(0.0, Pi))
 
 def compute_all_Pi(o_to_v, chr_to_genes_V, gene_to_pos_V, W):
 	"""
@@ -312,10 +329,21 @@ def poibin_tail(Pi_dict, outgroup_genes, k):
 	pb = PoiBin(probs)
 	return pb.pval(k)   # this is P(X >= k)
 
+def has_full_window(center_idx, n_genes, W):
+    """
+    Return True if a full window of size W can be centered on center_idx
+    without shrinking at chromosome edges.
+    """
+    half = W // 2
+    start = center_idx - half
+    end = start + W
+    return (start >= 0) and (end <= n_genes)
+
 def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict, p_method="poibin"):
 	"""
 	Compute N0, k, P_geom, P_value for one anchor (V,O) and window size W.
-	"""
+	"""	
+
 	if vertebrate_gene not in gene_to_pos_V:
 		return None
 	if outgroup_gene not in gene_to_pos_O:
@@ -326,6 +354,16 @@ def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_
 
 	genes_on_chr_v = chr_to_genes_V[chr_v]
 	genes_on_chr_o = chr_to_genes_O[chr_o]
+
+	if not has_full_window(idx_v, len(genes_on_chr_v), W):
+		if verbose:
+			print("WARNING: vertebrate gene", vertebrate_gene, "does not have a full window of size", W, "and is thus excluded as an anchor", file=sys.stderr)
+		return None
+	
+	if not has_full_window(idx_o, len(genes_on_chr_o), W):
+		if verbose:
+			print("WARNING: outgroup gene", outgroup_gene, "does not have a full window of size", W, "and is thus excluded as an anchor", file=sys.stderr)
+		return None
 
     # Windows
 	start_v, end_v = get_window_indices(idx_v, len(genes_on_chr_v), W)
