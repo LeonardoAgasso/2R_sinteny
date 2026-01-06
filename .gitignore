@@ -5,6 +5,8 @@
 **/*.gff3
 **/*.fa
 **/*.gz
+**/*.txt
+**/*.tmp
 
 # BLAST/DIAMOND
 **/*.pdb

@@ -19,10 +19,17 @@ WINDOW_SIZES = [50, 100, 200, 300, 400, 500]
 MIN_K = 1
 OUTGROUPS = ["cin", "csa"]
 
+v_err_file_path = "./err/v_excluded_genes.txt"
+o_err_file_path = "./err/o_excluded_genes.txt"
+
+
 
 # FLOAT FORMATTING
 def fmt(x):
 	return format(x, ".17g")
+
+def warn(msg):
+	print(msg, file=sys.stderr)
 
 
 # GENOMES
@@ -65,7 +72,7 @@ def load_outgroup_genomes(folder_path):
 		outgroup_name -> (chr_to_genes, gene_to_pos)
 	"""
 	if verbose:
-		print(f"Loading outgroup genomes from {folder_path}...", file=sys.stderr)
+		warn(f"Loading outgroup genomes from {folder_path}...")
 	
 	outgroup_genomes = {}
 	for og in OUTGROUPS:
@@ -89,7 +96,7 @@ def load_ortholog_pairs(orthology_tsv, outgroup_col_idx_zero_based):
 		- o_to_v: O -> set of V
 	"""
 	if verbose:
-		print(f"Loading ortholog pairs from {orthology_tsv}...", file=sys.stderr)
+		warn(f"Loading ortholog pairs from {orthology_tsv}...")
 	
 	ortholog_pairs = []
 	v_to_o = defaultdict(set)
@@ -129,7 +136,7 @@ def load_all_orthology_pairs(orthology_root_dir, vert):
 		orthology_data: dict[og] -> (ortholog_pairs, v_to_o, o_to_v)
 	"""
 	if verbose:
-		print(f"Loading orthology for outgroups from {orthology_root_dir}...", file=sys.stderr)
+		warn(f"Loading orthology for outgroups from {orthology_root_dir}...")
 
 	orthology_data = {}
 	for og in OUTGROUPS:
@@ -150,7 +157,7 @@ def load_paralog_pairs(paralogy_tsv, self_col_idx_zero_based):
 		- g_to_g: G -> set of G (paralogs)
 	"""
 	if verbose:
-		print(f"Loading paralog pairs from {paralogy_tsv}...", file=sys.stderr)
+		warn(f"Loading paralog pairs from {paralogy_tsv}...", file=sys.stderr)
 	
 	paralog_pairs = []
 	g_to_g = defaultdict(set)
@@ -194,7 +201,6 @@ def get_window_indices(center_idx, n_genes, W):
 	if start < 0:
 		start = 0
 		end = L
-
 	if end > n_genes:
 		end = n_genes
 		start = n_genes - L
@@ -313,21 +319,14 @@ def binomial_tail(N0, k, P):
 	p_tail = 0.0
 	for j in range(k, N0 + 1):
 		p_tail += math.comb(N0, j) * (P ** j) * ((1 - P) ** (N0 - j))
-	if p_tail < 0.0:
-		p_tail = 0.0
-	if p_tail > 1.0:
-		p_tail = 1.0
-	return p_tail
 
-def poibin_tail(Pi_dict, outgroup_genes, k):
-	"""
-	Exact right-tail P[X >= k] for X = sum of independent Bernoulli(p_i),
-	using the Poisson–binomial distribution.
-	"""
-	# Build the list of probabilities in a fixed order over your trials
-	probs = [Pi_dict.get(og, 0.0) for og in outgroup_genes]  # ignore missing genes (Pi=0)
+	return min(1.0, max(0.0, p_tail))
+
+def poibin_tail(Pi_dict, genes, k: int):
+	"""Exact right-tail for Poisson-binomial sum of independent Bernoulli(p_i)."""
+	probs = [Pi_dict.get(g, 0.0) for g in genes]
 	pb = PoiBin(probs)
-	return pb.pval(k)   # this is P(X >= k)
+	return pb.pval(k)  # P(X >= k)
 
 def has_full_window(center_idx, n_genes, W):
     """
@@ -336,64 +335,69 @@ def has_full_window(center_idx, n_genes, W):
     """
     half = W // 2
     start = center_idx - half
-    end = start + W
+    end = start + W + 1 
     return (start >= 0) and (end <= n_genes)
 
-def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict, p_method="poibin"):
+def pvalue_for_anchor(anchor_A, anchor_B, W, chr_to_genes_A, chr_to_genes_B, gene_to_pos_A, gene_to_pos_B, b_to_a, Pi_dict, p_method="poibin", err_tag=None, err_file_path=None):
 	"""
 	Compute N0, k, P_geom, P_value for one anchor (V,O) and window size W.
 	"""	
 
-	if vertebrate_gene not in gene_to_pos_V:
+	if anchor_A not in gene_to_pos_A:
 		return None
-	if outgroup_gene not in gene_to_pos_O:
+	if anchor_B not in gene_to_pos_B:
 		return None
 
-	chr_v, idx_v = gene_to_pos_V[vertebrate_gene]
-	chr_o, idx_o = gene_to_pos_O[outgroup_gene]
+	chr_a, idx_a = gene_to_pos_A[anchor_A]
+	chr_b, idx_b = gene_to_pos_B[anchor_B]
 
-	genes_on_chr_v = chr_to_genes_V[chr_v]
-	genes_on_chr_o = chr_to_genes_O[chr_o]
+	genes_on_chr_a = chr_to_genes_A[chr_a]
+	genes_on_chr_b = chr_to_genes_B[chr_b]
 
-	if not has_full_window(idx_v, len(genes_on_chr_v), W):
-		if verbose:
-			print("WARNING: vertebrate gene", vertebrate_gene, "does not have a full window of size", W, "and is thus excluded as an anchor", file=sys.stderr)
+	# Strict exclusion (your original design): require a symmetric full window
+	if not has_full_window(idx_a, len(genes_on_chr_a), W):
+		if err_tag and err_file_path:
+			warn(f"WARNING ({err_tag}): {anchor_A} on chr {chr_a} (n={len(genes_on_chr_a)}) cannot fit window W={W}; excluded as anchor")
+			with open(err_file_path, "a") as f:
+				f.write(f"{anchor_A}\t{W}\t{chr_a}\t{len(genes_on_chr_a)}\n")
 		return None
-	
-	if not has_full_window(idx_o, len(genes_on_chr_o), W):
-		if verbose:
-			print("WARNING: outgroup gene", outgroup_gene, "does not have a full window of size", W, "and is thus excluded as an anchor", file=sys.stderr)
+
+	if not has_full_window(idx_b, len(genes_on_chr_b), W):
+		if err_tag and err_file_path:
+			warn(f"WARNING ({err_tag}): {anchor_B} on chr {chr_b} (n={len(genes_on_chr_b)}) cannot fit window W={W}; excluded as anchor")
+			with open(err_file_path, "a") as f:
+				f.write(f"{anchor_B}\t{W}\t{chr_b}\t{len(genes_on_chr_b)}\n")
 		return None
 
     # Windows
-	start_v, end_v = get_window_indices(idx_v, len(genes_on_chr_v), W)
-	start_o, end_o = get_window_indices(idx_o, len(genes_on_chr_o), W)
+	start_a, end_a = get_window_indices(idx_a, len(genes_on_chr_a), W)
+	start_b, end_b = get_window_indices(idx_b, len(genes_on_chr_b), W)
 
-	window_v_genes = set(genes_on_chr_v[start_v:end_v])
-	window_o_genes = set(genes_on_chr_o[start_o:end_o])
+	window_a_genes = set(genes_on_chr_a[start_a:end_a])
+	window_b_genes = set(genes_on_chr_b[start_b:end_b])
 
 	# Exclude anchor outgroup gene from the outgroup window
-	window_o_genes_no_anchor = window_o_genes - {outgroup_gene}
+	window_b_genes_no_anchor = window_b_genes - {anchor_B}
 
-    # O_candidates: outgroup genes in window that have at least one vertebrate ortholog anywhere
-	O_candidates = [og for og in window_o_genes_no_anchor if og in o_to_v]
-	N0 = len(O_candidates)
+    # B_candidates: outgroup genes in window that have at least one vertebrate ortholog anywhere
+	B_candidates = [og for og in window_b_genes_no_anchor if og in b_to_a]
+	N0 = len(B_candidates)
 
 	if N0 == 0:
 		return None	# exclude anchors with no outgroup orthologs in window
 
 	# k: outgroup genes that have ≥1 ortholog in the vertebrate window
 	k = 0
-	for og in O_candidates:
-		orth_vs = o_to_v[og]  # set of vertebrate orthologs
-		if orth_vs & window_v_genes:
+	for og in B_candidates:
+		orth_vs = b_to_a[og]  # set of vertebrate orthologs
+		if orth_vs & window_a_genes:
 			k += 1
 
 	if k < MIN_K:
 		return None # require at least 2 orthologous outgroup genes in the vertebrate window, excluding the anchor.
 
-    # print(f"Probabilities for O_candidates: {[Pi_dict.get(og, 0.0) for og in O_candidates]}", file=sys.stderr)
-	P_geom = geometric_mean_P(Pi_dict, O_candidates)
+    # warn(f"Probabilities for B_candidates: {[Pi_dict.get(og, 0.0) for og in B_candidates]}")
+	P_geom = geometric_mean_P(Pi_dict, B_candidates)
 
 	if P_geom is None:
 		return None  # no positive Pi values
@@ -401,7 +405,7 @@ def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_
 	if p_method == "mean_field":
 		p_val = binomial_tail(N0, k, P_geom)
 	elif p_method == "poibin":
-		p_val = poibin_tail(Pi_dict, O_candidates, k)  # NaN check
+		p_val = poibin_tail(Pi_dict, B_candidates, k)  # NaN check
 	else:
 		raise ValueError(f"Unknown p-value computation method: {p_method}")
     
@@ -410,65 +414,60 @@ def pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_
 
 # Q-VALUE
 def qval_vertebrate_genes_og(v_o_qscores, method="worse_p"):
-    """
-    Given v_o_qscores: dict[(vertebrate_gene, outgroup_gene) -> q_score],
-    find vertebrate genes sharing the same outgroup gene.
+	"""
+	Given v_o_qscores: dict[(vertebrate_gene, outgroup_gene) -> q_score],
+	find vertebrate genes sharing the same outgroup gene.
 
-    For each outgroup gene O, consider all vertebrate genes V that form
-    anchors (V, O). For each pair (V, V') with the same O, combine their
-    q-scores (i.e. p-values) into a V-V' q-value:
+	For each outgroup gene O, consider all vertebrate genes V that form
+	anchors (V, O). For each pair (V, V') with the same O, combine their
+	q-scores (i.e. p-values) into a V-V' q-value:
 
-        method == "worse_p":      q = max(q1, q2)
-        method == "geometric_mean": q = sqrt(q1 * q2)
-        method == "harmonic_mean":  q = 2*q1*q2 / (q1 + q2)
+		method == "worse_p":      q = max(q1, q2)
+		method == "geometric_mean": q = sqrt(q1 * q2)
+		method == "harmonic_mean":  q = 2*q1*q2 / (q1 + q2)
 
-    Returns:
-        vv_pvals: dict[(v1, v2) -> q_value]
-    """
-    from collections import defaultdict
+	Returns:
+		vv_pvals: dict[(v1, v2) -> q_value]
+	"""
+	outgroup_to_vertebrates = defaultdict(list)
+	for (v_gene, o_gene), q in v_o_qscores.items():
+		outgroup_to_vertebrates[o_gene].append((v_gene, q))
 
-    outgroup_to_vertebrates = defaultdict(list)
-    for (v_gene, o_gene), q in v_o_qscores.items():
-        outgroup_to_vertebrates[o_gene].append((v_gene, q))
+	vv_pvals = {}
+	for o_gene, v_list in outgroup_to_vertebrates.items():
+		if len(v_list) < 2:
+			continue  # need at least two vertebrates sharing the same outgroup
 
-    vv_pvals = {}
+		for i in range(len(v_list)):
+			for j in range(i + 1, len(v_list)):
+				v1, q1 = v_list[i]
+				v2, q2 = v_list[j]
 
-    for o_gene, v_list in outgroup_to_vertebrates.items():
-        if len(v_list) < 2:
-            continue  # need at least two vertebrates sharing the same outgroup
+				if method == "worse_p":
+					q = max(q1, q2)
+				elif method == "geometric_mean":
+					q = math.sqrt(q1 * q2)
+				elif method == "harmonic_mean":
+					q = 0.0 if (q1 + q2) == 0 else (2.0 * q1 * q2 / (q1 + q2))
+				else:
+					raise ValueError(f"Unknown method for q-value computation: {method}")
 
-        for i in range(len(v_list)):
-            for j in range(i + 1, len(v_list)):
-                v1, q1 = v_list[i]
-                v2, q2 = v_list[j]
+				# canonicalize pair ordering to avoid duplicates (v1, v2) vs (v2, v1)
+				if v1 > v2:
+					v1, v2 = v2, v1
 
-                if method == "worse_p":
-                    q = max(q1, q2)
-                elif method == "geometric_mean":
-                    q = math.sqrt(q1 * q2)
-                elif method == "harmonic_mean":
-                    if q1 + q2 == 0:
-                        q = 0.0
-                    else:
-                        q = 2 * (q1 * q2) / (q1 + q2)
-                else:
-                    raise ValueError(f"Unknown method for q-value computation: {method}")
+				# if multiple outgroups contribute the same V-V' pair,
+				# you may want to combine them (e.g. multiply q-scores, like OHNOLOGS v1)
+				if (v1, v2) in vv_pvals:
+					# here I choose to keep the *minimum* q (most significant) across outgroups,
+					# but you could also multiply or geometric-mean them.
+					vv_pvals[(v1, v2)] = min(vv_pvals[(v1, v2)], q)
+				else:
+					vv_pvals[(v1, v2)] = q
 
-                # canonicalize pair ordering to avoid duplicates (v1, v2) vs (v2, v1)
-                if v1 > v2:
-                    v1, v2 = v2, v1
+	return vv_pvals
 
-                # if multiple outgroups contribute the same V-V' pair,
-                # you may want to combine them (e.g. multiply q-scores, like OHNOLOGS v1)
-                if (v1, v2) in vv_pvals:
-                    # here I choose to keep the *minimum* q (most significant) across outgroups,
-                    # but you could also multiply or geometric-mean them.
-                    vv_pvals[(v1, v2)] = min(vv_pvals[(v1, v2)], q)
-                else:
-                    vv_pvals[(v1, v2)] = q
 
-    return vv_pvals
-            
 def qval_vertebrate_genes_self(v_qscores):
 	"""
 	v_qscores: dict[(v_anchor, v_partner) -> q_dir]
@@ -499,25 +498,18 @@ def qval_vertebrate_genes_self(v_qscores):
 		pair_to_qs[(v1, v2)].append(q)
 
 	vv_qvals_self = {}
-
 	for (v1, v2), qs in pair_to_qs.items():
 		if not qs:
 			continue
-
 		log_sum = 0.0
 		for x in qs:
-			# guard: if x <= 0, treat as very small but positive
 			if x <= 0.0:
 				x = 1e-300
 			log_sum += math.log(x)
-		q_comb = math.exp(log_sum / len(qs))
 
-		vv_qvals_self[(v1, v2)] = q_comb
+		vv_qvals_self[(v1, v2)] = math.exp(log_sum / len(qs))
 
 	return vv_qvals_self
-
-
-# UTILS
 
 
 
@@ -525,10 +517,10 @@ def qval_vertebrate_genes_self(v_qscores):
 def main():
 	
 	if len(sys.argv) != 4:
-		print(f"Usage: {sys.argv[0]} <vertebrate_short_name> <pval_compute_method> <pval_choose_method>", file=sys.stderr)
-		print(f"  where: <vertebrate_short_name> is one of: hsa, mmu, rno, gga, dre", file=sys.stderr)
-		print(f"         <pval_compute_method> is one of: poibin, mean_field", file=sys.stderr)
-		print(f"         <pval_choose_method> is one of: worse_p, geometric_mean, harmonic_mean", file=sys.stderr)
+		warn(f"Usage: {sys.argv[0]} <vertebrate_short_name> <pval_compute_method> <pval_choose_method>")
+		warn(f"  where: <vertebrate_short_name> is one of: hsa, mmu, rno, gga, dre")
+		warn(f"         <pval_compute_method> is one of: poibin, mean_field")
+		warn(f"         <pval_choose_method> is one of: worse_p, geometric_mean, harmonic_mean")
 		sys.exit(1)
 
 	dataset_path = "/home/lagasso/projects/sinteny/dataset"
@@ -538,18 +530,34 @@ def main():
 	pval_choose_method = sys.argv[3]
 
 	vertebrate_bed = f'{dataset_path}/genomes/vertebrata/{vertebrate}/{vertebrate}_biomart_all.bed'
+	#vertebrate_bed = f'{dataset_path}/genomes/vertebrata/{vertebrate}/{vertebrate}_biomart_protein_coding.bed'
 	outgroup_root_dir   = f'{dataset_path}/genomes/outgroups/'
 	orthology_root_dir  = f'{dataset_path}/orthologs'
 	paralogy_tsv        = f'{dataset_path}/paralogs/{vertebrate}_biomart_paralogs.tsv'
+	
 	self_col_1based     = 1
 	self_col_idx        = self_col_1based - 1
 
+    os.makedirs("./err", exist_ok=True)
+
+	# reset error files
+	if os.path.exists(v_err_file_path):
+		os.remove(v_err_file_path)
+	if os.path.exists(o_err_file_path):
+		os.remove(o_err_file_path)
+
+	excluded_genes_header = "gene_id\tW\tchr\tn_genes_on_chromosome\n"
+	with open(v_err_file_path, "w") as f:
+		f.write(excluded_genes_header)
+	with open(o_err_file_path, "w") as f:
+		f.write(excluded_genes_header)
+
 	chr_to_genes_V, gene_to_pos_V = load_bed_genome(vertebrate_bed)
 	outgroup_genomes = load_outgroup_genomes(outgroup_root_dir)
-
 	orthology_data = load_all_orthology_pairs(orthology_root_dir, vertebrate)
 	paralog_pairs, g_to_g = load_paralog_pairs(paralogy_tsv, self_col_idx)
 
+	# Precompute Pi per window size for outgroup comparisons
 	Pi_by_W_out = {og: {} for og in OUTGROUPS}
 	for og in OUTGROUPS:
 		_, _, o_to_v = orthology_data[og]  # note: load_all_orthology_pairs gives (ortholog_pairs, v_to_o, o_to_v)
@@ -566,16 +574,16 @@ def main():
 
 	for og in OUTGROUPS:
 		if verbose:
-			print(f"Processing O {og}...", file=sys.stderr)
+			warn(f"Processing outgroup {og}...")
 
 		chr_to_genes_O, gene_to_pos_O = outgroup_genomes[og]
 		ortholog_pairs, v_to_o, o_to_v = orthology_data[og]
 
-		# anchor -> outgroup p-values over W
+		# For each anchor (V,O), store p-values across W
 		v_o_pvals = defaultdict(list)
 
 		if verbose:
-			print("V --> O p-value computations...", file=sys.stderr)
+			warn("V --> O p-value computations...")
 		
 		for vertebrate_gene, outgroup_gene in ortholog_pairs:
 			if vertebrate_gene not in gene_to_pos_V:
@@ -585,13 +593,13 @@ def main():
 
 			for W in WINDOW_SIZES:
 				Pi_dict = Pi_by_W_out[og][W]
-				res = pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict, p_method=pval_compute_method)
-				if res is None:  # N0==0 or k<MIN_K
+				res = pvalue_for_anchor(vertebrate_gene, outgroup_gene, W, chr_to_genes_V, chr_to_genes_O, gene_to_pos_V, gene_to_pos_O, o_to_v, Pi_dict, p_method=pval_compute_method, err_tag="V->O", err_file_path=v_err_file_path)
+				if res is None:
 					continue
 				v_o_pvals[(vertebrate_gene, outgroup_gene)].append(res["p_value"])
 
 		if verbose:
-			print("V --> O q-score computations...", file=sys.stderr)
+			warn("V --> O q-score computations...")
 		
 		v_og_qscores = {}
 		for (v_gene, o_gene), pvals in v_o_pvals.items():
@@ -601,27 +609,28 @@ def main():
 			else:
 				log_sum = sum(math.log(p) for p in positive_pvals)
 				q = math.exp(log_sum / len(positive_pvals))
-			
 			v_og_qscores[(v_gene, o_gene)] = q
 
 		if verbose:
-			print("V --> V' q-value computations...", file=sys.stderr)
+			warn("V --> V' q-value computations...")
 
 		vv_qvals_og_this = qval_vertebrate_genes_og(v_og_qscores, method=pval_choose_method)
 
 		if verbose:
-			print(f"Combining V–V' q-values from outgroup {og}...", file=sys.stderr)
+			warn(f"Combining V–V' q-values from outgroup {og}...")
 		
 		for (v1, v2), q_og in vv_qvals_og_this.items():
 			vv_qvals_og_combined[(v1, v2)] *= q_og
 
+	# SELF COMPARISON
 	if verbose:
-		print("Self-comparisons...", file=sys.stderr)
+		warn("Self-comparisons...")
 	
 	v_self_pvals = defaultdict(list)  # key: (anchor_gene, partner_gene)
 	
 	if verbose:
-		print("V --> V p-value computations (self)...", file=sys.stderr)
+		warn("V --> V p-value computations (self)...")
+
 	for g1, g2 in paralog_pairs:
 		if g1 not in gene_to_pos_V or g2 not in gene_to_pos_V:
 			continue
@@ -629,16 +638,17 @@ def main():
 		for W in WINDOW_SIZES:
 			Pi_dict_self = Pi_by_W_self[W]
 
-			# direction g1 -> g2
-			res12 = pvalue_for_anchor(g1, g2, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self, p_method=pval_compute_method)
+			# g1 --> g2
+			res12 = pvalue_for_anchor(g1, g2, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self, p_method=pval_compute_method, err_tag=None, err_file_path=None)
 			if res12 is not None:
 				v_self_pvals[(g1, g2)].append(res12["p_value"])
 
-            # direction g2 -> g1
-			res21 = pvalue_for_anchor(g2, g1, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self, p_method=pval_compute_method)
+			# g2 --> g1
+			res21 = pvalue_for_anchor(g2, g1, W, chr_to_genes_V, chr_to_genes_V, gene_to_pos_V, gene_to_pos_V, g_to_g, Pi_dict_self, p_method=pval_compute_method, err_tag=None, err_file_path=None)
 			if res21 is not None:
 				v_self_pvals[(g2, g1)].append(res21["p_value"])
 
+	#
 	v_self_qscores = {}
 	for (v1, v2), pvals in v_self_pvals.items():
 		positive_pvals = [p for p in pvals if p > 0.0]
