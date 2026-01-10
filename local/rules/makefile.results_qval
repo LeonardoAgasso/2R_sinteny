@@ -10,5 +10,5 @@ hsa_ortho.tsv:
 	ln -s dataset/orthologs/$*_biomart_orthologs.tsv ./$@
 
 
-og_hsa.tsv: 
-
+og_hsa_%.tsv: 
+	../../../local/bin/vertebrate_outgroup.py hsa $* worse_p > $@

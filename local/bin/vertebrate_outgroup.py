@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 import math
 from collections import defaultdict
 sys.path.append("/home/lagasso/projects/sinteny/local/utils/")
 from poibin import PoiBin
+import numpy as np
 
 
 """
@@ -15,7 +17,7 @@ Compute synteny-based q-values for vertebrate genes using outgroup genomes.
 
 debug = False
 verbose = True
-WINDOW_SIZES = [50, 100, 200, 300, 400, 500]
+WINDOW_SIZES = [100, 200, 300, 400, 500]
 MIN_K = 1
 OUTGROUPS = ["cin", "csa"]
 
@@ -157,7 +159,7 @@ def load_paralog_pairs(paralogy_tsv, self_col_idx_zero_based):
 		- g_to_g: G -> set of G (paralogs)
 	"""
 	if verbose:
-		warn(f"Loading paralog pairs from {paralogy_tsv}...", file=sys.stderr)
+		warn(f"Loading paralog pairs from {paralogy_tsv}...")
 	
 	paralog_pairs = []
 	g_to_g = defaultdict(set)
@@ -294,7 +296,6 @@ def geometric_mean_P(Pi_dict, outgroup_genes):
 
 	for og in outgroup_genes:
 		Pi = Pi_dict.get(og, 0.0)
-        
 		if Pi > 0.0:
 			log_sum += math.log(Pi)
 			k += 1
@@ -323,20 +324,35 @@ def binomial_tail(N0, k, P):
 	return min(1.0, max(0.0, p_tail))
 
 def poibin_tail(Pi_dict, genes, k: int):
-	"""Exact right-tail for Poisson-binomial sum of independent Bernoulli(p_i)."""
-	probs = [Pi_dict.get(g, 0.0) for g in genes]
-	pb = PoiBin(probs)
-	return pb.pval(k)  # P(X >= k)
+    """Exact right-tail for Poisson-binomial sum of independent Bernoulli(p_i)."""
+    probs = [Pi_dict.get(g, 0.0) for g in genes]
+    
+    if not probs:
+        return None
+    
+    try:
+        pb = PoiBin(probs)
+        result = pb.pval(k)
+        
+        if np.isnan(result):
+            return None
+        
+        return result
+    
+	except Exception as e:
+        warn(f"PoiBin error: {e}")
+        return None
+	
 
 def has_full_window(center_idx, n_genes, W):
-    """
-    Return True if a full window of size W can be centered on center_idx
-    without shrinking at chromosome edges.
-    """
-    half = W // 2
-    start = center_idx - half
-    end = start + W + 1 
-    return (start >= 0) and (end <= n_genes)
+	"""
+	Return True if a full window of size W can be centered on center_idx
+	without shrinking at chromosome edges.
+	"""
+	half = W // 2
+	start = center_idx - half
+	end = start + W + 1 
+	return (start >= 0) and (end <= n_genes)
 
 def pvalue_for_anchor(anchor_A, anchor_B, W, chr_to_genes_A, chr_to_genes_B, gene_to_pos_A, gene_to_pos_B, b_to_a, Pi_dict, p_method="poibin", err_tag=None, err_file_path=None):
 	"""
@@ -369,7 +385,7 @@ def pvalue_for_anchor(anchor_A, anchor_B, W, chr_to_genes_A, chr_to_genes_B, gen
 				f.write(f"{anchor_B}\t{W}\t{chr_b}\t{len(genes_on_chr_b)}\n")
 		return None
 
-    # Windows
+	# Windows
 	start_a, end_a = get_window_indices(idx_a, len(genes_on_chr_a), W)
 	start_b, end_b = get_window_indices(idx_b, len(genes_on_chr_b), W)
 
@@ -530,7 +546,7 @@ def main():
 	pval_choose_method = sys.argv[3]
 
 	vertebrate_bed = f'{dataset_path}/genomes/vertebrata/{vertebrate}/{vertebrate}_biomart_all.bed'
-	#vertebrate_bed = f'{dataset_path}/genomes/vertebrata/{vertebrate}/{vertebrate}_biomart_protein_coding.bed'
+	#vertebrate_bed = f'{dataset_path}/genomes/vertebrata/{vertebrate}/{vertebrate}_biomart_proteincoding.bed'
 	outgroup_root_dir   = f'{dataset_path}/genomes/outgroups/'
 	orthology_root_dir  = f'{dataset_path}/orthologs'
 	paralogy_tsv        = f'{dataset_path}/paralogs/{vertebrate}_biomart_paralogs.tsv'
@@ -538,7 +554,7 @@ def main():
 	self_col_1based     = 1
 	self_col_idx        = self_col_1based - 1
 
-    os.makedirs("./err", exist_ok=True)
+	os.makedirs("./err", exist_ok=True)
 
 	# reset error files
 	if os.path.exists(v_err_file_path):
